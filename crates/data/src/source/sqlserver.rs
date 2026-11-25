@@ -213,10 +213,13 @@ fn auth_method(login: &Login, password: Option<&str>) -> Result<tiberius::AuthMe
     }
 }
 
-fn normalize_routing_host(host: &str) -> &str {
+fn lookup_routing_host(host: &str) -> &str {
     let trimmed = host.trim();
-    let unbracketed = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')).unwrap_or(trimmed);
-    unbracketed.trim_end_matches('.')
+    trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')).unwrap_or(trimmed)
+}
+
+fn normalize_routing_host(host: &str) -> &str {
+    lookup_routing_host(host).trim_end_matches('.')
 }
 
 fn unmap_ipv4(ip: IpAddr) -> IpAddr {
@@ -319,8 +322,9 @@ async fn resolve_validated_routing_addrs(
     host: &str,
     port: u16,
 ) -> std::result::Result<Vec<SocketAddr>, tiberius::error::Error> {
-    let clean_host = normalize_routing_host(host);
-    let resolved: Vec<SocketAddr> = tokio::net::lookup_host((clean_host, port)).await?.collect();
+    // Preserve any terminating DNS dot so the system resolver does not expand search domains.
+    let lookup_host = lookup_routing_host(host);
+    let resolved: Vec<SocketAddr> = tokio::net::lookup_host((lookup_host, port)).await?.collect();
     validate_routing_addrs(initial_peer_ip, resolved)
 }
 
@@ -1779,6 +1783,10 @@ mod tests {
         assert!(validate_routing_policy(&v6_cfg, "[::1]", 1434).is_ok());
         v6_cfg.host = "::ffff:127.0.0.1".into();
         assert!(validate_routing_policy(&v6_cfg, "127.0.0.1", 1434).is_ok());
+
+        // DNS lookup input must preserve terminating dot while stripping brackets/whitespace.
+        assert_eq!(lookup_routing_host(" sql.example.com. "), "sql.example.com.");
+        assert_eq!(lookup_routing_host("[::1]"), "::1");
     }
 
     #[test]
